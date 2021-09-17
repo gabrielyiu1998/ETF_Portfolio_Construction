@@ -1,0 +1,99 @@
+---
+title: "ETF Selection"
+author: "Gabriel Yiu"
+date: "February 18, 2021"
+output:
+  html_document:
+    code_folding: hide
+    toc: True
+    toc_depth: 2
+    toc_float: True
+---
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load and Clean Data
+
+```{r load, warning=FALSE, message=FALSE}
+library("quantmod")
+library("xts")
+library("zoo")
+library("rmgarch")
+library("MASS")
+library("ggplot2")
+library("dplyr")
+library("mvtnorm")
+
+load("iShares Manual Returns.Rdata")
+```
+
+## Garch Fitting
+```{r fit, warning=FALSE, message=FALSE}
+garchdcc_fit
+```
+
+## Garch Testing
+```{r testing, warning=FALSE, message=FALSE, results = 'asis'}
+for (sym in symbols){
+  tempdf <- data.frame(
+    Date = testdata$Date,
+    Ret = testdata[,sym],
+    Vol = testdata[, paste(sym,".vol",sep="")]
+  )
+  
+  tempdf$upr <- rep(mus[sym], nrow(tempdf)) + qnorm(0.995) * tempdf$Vol
+  tempdf$lwr <- rep(mus[sym], nrow(tempdf)) - qnorm(0.995) * tempdf$Vol
+  
+  print(
+    ggplot(data = tempdf, aes(x = Date)) +
+      geom_line(aes(y = lwr, color = "Lower CI")) +
+      geom_line(aes(y = Ret, color = "Return")) +
+      geom_line(aes(y = upr, color = "Upper CI")) +
+      labs(x = "Date", y = "Volatility", title = sym, color = "Legend") +
+      scale_color_manual(values = c("darkred","steelblue", "darkred")) +
+      theme_bw()
+  )
+}
+```
+
+## Portfolio Construction
+```{r Portfolio, warning=FALSE, message=FALSE}
+ggplot(data = portfolio_values, aes(x = Risk, y = Returns, color = SharpeRatio)) +
+  geom_point() +
+  geom_abline(intercept = 0.0175, slope = max_sr$SharpeRatio, color = "red") +
+  scale_x_continuous(limits = c(0,0.2)) +
+  scale_y_continuous(limits = c(0,0.2)) +
+  theme_bw()
+
+ggplot(data = data.frame(x = 0)) +
+  stat_function(fun = TVaR, aes(color = "ES 99%")) +
+  stat_function(fun = ER, aes(color = "Expected")) +
+  stat_function(fun = VaR, aes(color = "VaR 99%")) +
+  scale_x_continuous(limits = c(0, 1)) +
+  scale_color_manual(name = "Measures",
+                     values = c("red", "steelblue", "darkred")) +
+  labs(title = "Measures", xlab = "Portfolio Weight", ylab = "Value") +
+  theme_bw()
+print(paste("TVAR:", TVaR(1, p = 0.005)))
+print(paste("VAR:", VaR(1, p = 0.005)))
+print(paste("ER:", ER(1)))
+print(max_sr)
+```
+
+## Portfolio Test
+
+```{r porttest}
+testdata$Port <- as.vector(as.matrix(testdata[,symbols]) %*% opt_wts)
+initamt <- 10000
+
+grwth <- matrix(nrow = nrow(testdata) + 1, ncol = length(compare))
+grwth[1,] <- rep(initamt, length(compare))
+colnames(grwth) <- compare
+for (i in 2:(nrow(testdata) + 1)){
+  grwth[i,] <- grwth[i - 1,] * unlist(exp(testdata[i - 1, compare]))
+}
+grwth_xts <- xts(data.frame(grwth[2:nrow(grwth),]), order.by = testdata$Date)
+plot(grwth_xts, legend.loc = "topleft", main = "Constructed Portfolio vs Other Funds")
+```
